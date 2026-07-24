@@ -125,6 +125,24 @@ engine.config.write('interframeBlending', true);
 engine.config.read('idleOptimization');            // 'remove'
 ```
 
+### Sizing the canvas
+
+The presentation ratio is not a constant a host can hardcode: 3:2 on GBA,
+10:9 on Game Boy, 8:7 once a Super Game Boy border appears, and 4:3 when the
+player picks `aspect: '4:3'`. So `load()` publishes it on the canvas two ways —
+`aspect-ratio`, which shapes the element, and `--mgba-aspect`, the same number
+in a form arithmetic can use:
+
+```css
+.runtime canvas {
+  width: min(100%, calc(100% * var(--mgba-aspect)));
+  height: auto;
+}
+```
+
+Both are updated whenever the geometry or the option changes, so a game
+switching resolution re-fits without the host doing anything.
+
 ### Capabilities
 
 - **Save states**: `saveState()` / `loadState()` via mGBA's in-memory snapshot

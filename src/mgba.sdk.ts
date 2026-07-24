@@ -598,9 +598,24 @@ export async function load(config: EngineConfig): Promise<MgbaInstance> {
   // Previous frame, kept only while interframe blending is on.
   let prevFrame: Uint8ClampedArray | null = null;
 
+  /**
+   * Publishes the presentation ratio two ways.
+   *
+   * `aspect-ratio` shapes the element. `--mgba-aspect` is the same number in a
+   * form arithmetic can use, so a stylesheet can size the canvas to fit its
+   * container without knowing which core is running:
+   *
+   *     width: min(100%, calc(100% * var(--mgba-aspect)));
+   *
+   * Which is not a detail a host can hardcode here: it is 1.5 on GBA, 1.11 on
+   * Game Boy, 1.14 once a Super Game Boy border appears, and 1.33 when the
+   * player picks `aspect: '4:3'`.
+   */
   const applyAspect = (): void => {
     if (!lastW) return;
-    canvas.style.aspectRatio = opts.aspect === '4:3' ? '4 / 3' : `${lastW} / ${lastH}`;
+    const fourThirds = opts.aspect === '4:3';
+    canvas.style.aspectRatio = fourThirds ? '4 / 3' : `${lastW} / ${lastH}`;
+    canvas.style.setProperty('--mgba-aspect', String(fourThirds ? 4 / 3 : lastW / lastH));
   };
 
   const renderFrame = (): void => {

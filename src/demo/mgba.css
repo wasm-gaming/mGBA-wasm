@@ -70,21 +70,33 @@
   --demo-font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
 }
 
-/* The GBA screen is 240x160 (3:2) with square pixels, and the Game Boy cores
-   render 160x144 (10:9) into the same canvas — so the container cannot commit
-   to one ratio. The SDK sets the canvas aspect-ratio from options.aspect and
-   from the geometry the core reports; the container just gives it room. */
+/* demo.css hardcodes `aspect-ratio: 5 / 4` on both .runtime and its canvas —
+   the dummy SDK's shape — and clips with overflow:hidden. No handheld is 5:4:
+   the GBA is 240x160 (3:2), the Game Boy cores are 160x144 (10:9), and a Super
+   Game Boy border makes it 256x224. Both rules have to be undone, or the
+   picture is letterboxed into the wrong box and then cut off by the clip.
+
+   The ratio is not a constant this file can substitute, either — it depends on
+   the core that booted and on options.aspect — so the SDK publishes it as
+   --mgba-aspect and the sizing below is written against that. */
 .runtime {
+  aspect-ratio: auto;
+  width: 100vw;
+  height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .runtime canvas {
+  /* The real ratio arrives inline from the SDK; this just clears demo.css. */
+  aspect-ratio: auto;
+  /* Grow to fill whichever axis runs out first. */
+  width: min(100vw, calc(100vh * var(--mgba-aspect, 1.5)));
+  height: auto;
   max-width: 100vw;
   max-height: 100vh;
-  width: auto;
-  height: auto;
+  display: block;
   /* Crisp integer-scaled pixels — no blur on upscaled handheld art. */
   image-rendering: pixelated;
 }

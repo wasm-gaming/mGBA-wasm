@@ -32,6 +32,16 @@ build-demo: build-lib ## Assemble the themable engine-specs demo shell + GBA ski
 	cp src/demo/index.html dist/index.html
 	cp src/demo/mgba.css dist/mgba.css
 
+SPECS_SRC ?= ../engine-specs
+
+link-specs: build-sdk ## Overlay a local engine-specs checkout's demo shell onto dist/
+	@test -d $(SPECS_SRC)/demo || { echo "no demo/ in $(SPECS_SRC) — set SPECS_SRC"; exit 1; }
+	cp -R $(SPECS_SRC)/demo/. dist/
+	@rm -f dist/README.md
+	cp src/demo/index.html dist/index.html
+	cp src/demo/mgba.css dist/mgba.css
+	@echo "dist/ now carries the shell from $(SPECS_SRC) (build-sdk reverts it to the npm one)"
+
 build-wasm: ## Build mGBA WASM artifacts via local Docker wrapper
 	bash scripts/build-mgba-docker.sh
 
