@@ -55,18 +55,6 @@
 
       let engine = null
 
-      // Files are tracked here rather than read back through demo.hasFile() /
-      // demo.loadToMEMFS(). In engine-specs 0.2.5 the shell's own save handlers
-      // receive the CustomEvent that jq79's programmatic `.on()` delivers and
-      // store it as if it were the File — every `extractFile` inside the
-      // components unwraps `.detail`, but demo.js's handleSaveRom/handleSaveBios
-      // do not — so its copy of the ROM is an Event and loadToMEMFS yields
-      // nothing. Unwrapping it here costs four lines and keeps the demo working
-      // against the published shell.
-      const files = { rom: null, bios: null }
-      const unwrap = (value) =>
-        value instanceof File ? value : value?.detail instanceof File ? value.detail : null
-
       demo
         .init({
           manifest,
@@ -91,23 +79,10 @@
             },
           },
         })
-        .on('rom:save', (payload) => {
-          files.rom = unwrap(payload?.file)
-        })
-        .on('rom:remove', () => {
-          files.rom = null
-        })
-        .on('bios:save', (payload) => {
-          files.bios = unwrap(payload?.file)
-        })
-        .on('bios:remove', () => {
-          files.bios = null
-        })
         .on('launch', async (e) => {
-          if (!files.rom) throw new Error('No ROM selected')
-
-          const assets = { rom: new Uint8Array(await files.rom.arrayBuffer()) }
-          if (files.bios) assets.bios = new Uint8Array(await files.bios.arrayBuffer())
+          const assets = {}
+          if (demo.hasFile('rom')) assets.rom = await demo.loadToMEMFS('rom')
+          if (demo.hasFile('bios')) assets.bios = await demo.loadToMEMFS('bios')
 
           engine = await sdk.load({
             attachTo: e.attachTo,
@@ -116,7 +91,7 @@
             persist: 'opfs',
             // Per-game SRAM and per-game menu tweaks, keyed by the file the
             // player dropped.
-            storageNamespace: files.rom.name.replace(/\.[^.]+$/, ''),
+            storageNamespace: (e.fileName || 'default').replace(/\.[^.]+$/, ''),
             onEvent(event) {
               if (event.type === 'error') console.error(event.error)
             },

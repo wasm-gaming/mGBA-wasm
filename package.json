@@ -37,7 +37,7 @@
   "comment:scripts": "Build logic lives in the Makefile, not here (make build / build-sdk / build-wasm / preview).",
   "scripts": {},
   "peerDependencies": {
-    "@wasm-gaming/engine-specs": ">=0.2.5"
+    "@wasm-gaming/engine-specs": ">=0.2.6"
   },
   "peerDependenciesMeta": {
     "@wasm-gaming/engine-specs": {
@@ -45,7 +45,7 @@
     }
   },
   "devDependencies": {
-    "@wasm-gaming/engine-specs": "^0.2.5",
+    "@wasm-gaming/engine-specs": "^0.2.6",
     "typescript": "^5.5.0"
   },
   "engineContract": "https://github.com/wasm-gaming/engine-specs",

@@ -13,7 +13,7 @@ geolith-wasm, fbneo-wasm, jgenesis-wasm, blastem-wasm, and rsdkv*:
 - Makefile-driven build (`build-sdk`, `build-wasm`, `preview`)
 
 It conforms to the [`@wasm-gaming/engine-specs`](https://github.com/wasm-gaming/engine-specs)
-contract (`EngineSDK` = `{ manifest, load }`), targeting **0.2.5** — the first
+contract (`EngineSDK` = `{ manifest, load }`), targeting **0.2.6** — 0.2.5 was the first
 version in which the in-game ESC menu belongs to the host's demo shell rather
 than to each engine, so this package ships the option rows and applies the
 writes instead of drawing a menu itself.
