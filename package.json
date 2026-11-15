@@ -1,6 +1,6 @@
 {
   "name": "@wasm-gaming/mgba-wasm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "mGBA (Game Boy Advance / Game Boy / Game Boy Color emulator) compiled to WebAssembly via Emscripten, with a JS SDK conforming to the wasm-gaming engine contract.",
   "repository": {
     "type": "git",
