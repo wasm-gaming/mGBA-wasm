@@ -4,19 +4,11 @@
 Advance** emulator, which also runs **Game Boy** and **Game Boy Color** —
 compiled to WebAssembly via Emscripten and packaged as a wasm-gaming engine SDK.
 
-This subproject follows the same engine-package approach used by snes9x-wasm,
-geolith-wasm, fbneo-wasm, jgenesis-wasm, blastem-wasm, and rsdkv*:
-
-- typed `manifest`
-- typed `options`
-- `load(config)` engine SDK surface
-- Makefile-driven build (`build-sdk`, `build-wasm`, `preview`)
-
 It conforms to the [`@wasm-gaming/engine-specs`](https://github.com/wasm-gaming/engine-specs)
-contract (`EngineSDK` = `{ manifest, load }`), targeting **0.2.6** — 0.2.5 was the first
-version in which the in-game ESC menu belongs to the host's demo shell rather
-than to each engine, so this package ships the option rows and applies the
-writes instead of drawing a menu itself.
+**1.0 contract** (`MgbaSDK` / `MgbaPlay` on the contract's base classes), the same shape as
+snes9x-wasm, blastem-wasm and fbneo-wasm: save-state slots, owner-aware pause, and the
+wasm-gaming engine app (`./app`). The built SDK is self-contained ESM — `engine-specs.js` ships
+beside it — so it loads from any static server, with no bundler or import map.
 
 mGBA ships several frontends (`qt/`, `sdl/`, `libretro/`); none of them suit a
 browser, so this package supplies its own
@@ -51,23 +43,43 @@ out of the settings menu, because there is no intro to skip.
 ## Contract surface
 
 ```js
-import { manifest, load } from '@wasm-gaming/mgba-wasm';
+import MgbaSDK from '@wasm-gaming/mgba-wasm';
 
-const engine = await load({
-  canvasEl: canvas,               // or attachTo: containerEl
-  assets: {
-    rom: gbaFileBytes,            // .gba/.gb/.gbc image, or a zip of one
-    // bios: gbaBiosBytes,        // optional
-  },
-  options: { system: 'auto', aspect: 'native' },
-  persist: 'opfs',
-  storageNamespace: 'minish-cap',
-  onEvent: (e) => console.log(e),
-});
-engine.start();
+const play = await new MgbaSDK()
+  .options({ system: 'auto', aspect: 'native' })
+  .assets({ rom: () => file.arrayBuffer() /*, bios: biosBytes */ })
+  .storage({ namespace: 'minish-cap' })        // OPFS mgba/minish-cap/
+  .on('saves', ({ detail }) => console.log(detail.files))
+  .mount(document.querySelector('#stage'))     // an element (the SDK adds a canvas) or a canvas
+  .start();
 
-engine.system;                    // 'gba' | 'gb' — which core actually booted
+play.system;                                   // 'gba' | 'gb' — which core booted
+play.pause('menu'); play.resume('menu');       // the first owner holds the pause
+await play.restart();                          // power cycle
+await play.destroy();                          // battery RAM flushed, loop stopped, audio closed
 ```
+
+### Save states
+
+```js
+await play.states.save(0, { thumbnail: await play.snapshot() });
+play.states.load(0);           // true when mGBA took it (false: another game's state)
+play.states.list();            // slots 0-3: { slot, savedAt, thumbnail, locked }
+await play.states.copy(9, 1); await play.states.lock(1, true); await play.states.remove(0);
+```
+
+Slots 0–3 are the player's, 9 is the engine app's suspend point. Per slot, OPFS
+`mgba/<namespace>/` holds `slot_N.state` (mGBA's own snapshot: 388 KiB on GBA, 70 KiB on Game
+Boy), `slot_N.png` (its frame) and `slot_N.lock`; battery RAM is `sram.bin`, flushed every 15 s,
+on pause and on destroy. The slots are read into memory at start, so listing them is
+synchronous; every change is written through.
+
+## The engine app
+
+`@wasm-gaming/mgba-wasm/app` is the wasm-gaming engine app, the same as BlastEm's, FBNeo's and
+snes9x's: suspend points on start, Select+Start / Escape / the touch pad's pause button open the
+pause menu with the four slots in it (Cargar focused), Reiniciar, Volver al lanzador. The slot
+frames take the picture's shape (3:2 on GBA, 10:9 on Game Boy).
 
 ### Options
 
@@ -84,96 +96,61 @@ engine.system;                    // 'gba' | 'gb' — which core actually booted
 | `volume` | `1.0` | Master audio volume (0–1). |
 | `gamepads` | `true` | Poll connected gamepads (standard mapping) each frame. |
 | `logLevel` | `error` | Core messages printed to the console (`off`, `error`, `debug`). |
-| `escMenu` | `true` | Let the demo shell show its in-game settings menu on Escape. |
 
-## In-game settings menu
+## Live settings
 
-As of engine-specs 0.2.5 the ESC menu is a **demo-shell component**, not
-something each engine draws. This package supplies the rows and applies the
-writes:
-
-```js
-demo.init({
-  escMenu: {
-    optionGroups: toEscMenuGroups(),                 // from ./options
-    onOptionChange: (key, value) => engine.config.write(key, value),
-    onRestoreDefaults: () => engine.config.restoreDefaults(),
-  },
-});
-```
-
-Most of these apply to the running game: mGBA re-reads its `mCoreConfig` when
-the frontend calls `reloadConfigOption()`, which is how its own Qt frontend
-applies a settings change mid-play. The ones the core consumes while mapping
-the cartridge — `system`, `gbModel`, `skipBios` — are tagged **needs reset**,
-and the menu's *Reset game* re-maps it (battery RAM is carried across).
-
-- Changes persist per `storageNamespace` in `localStorage` and are re-applied
-  on the next `load()`. Explicit `options` passed by the host still win.
-- Settings the loaded `mgba.wasm` cannot apply — a build predating one of the
-  shim's setters — are omitted rather than erroring, so the menu degrades
-  cleanly against an older artifact.
-
-Every knob is declared once in [src/mgba.options.ts](src/mgba.options.ts); the
-manifest's options schema, the defaults and the menu rows are all derived from
-that catalog, so a new row there is enough to expose a new setting.
-
-Drive it yourself with `options: { escMenu: false }`:
+`play.settings` writes apply to the running game: mGBA re-reads its `mCoreConfig` when the
+frontend calls `reloadConfigOption()`, which is how its own Qt frontend applies a settings
+change mid-play. The ones the core consumes while mapping the cartridge — `system`, `gbModel`,
+`skipBios` — are **needs reset** (`live: false` in `MGBA_SPEC`), and `play.restart()` re-maps
+it (battery RAM is carried across).
 
 ```js
-engine.config.write('interframeBlending', true);
-engine.config.read('idleOptimization');            // 'remove'
+play.settings.write('interframeBlending', true);
+play.settings.read('idleOptimization');            // 'remove'
 ```
+
+- Writes are remembered per storage namespace in `localStorage` and re-applied on the next
+  start; options the host passes still win.
+- Settings the loaded `mgba.wasm` cannot apply — a build predating one of the shim's setters —
+  are omitted rather than erroring.
+- mGBA draws no settings overlay of its own; `toEscMenuGroups(play.settings.values())` gives a
+  host the rows to draw one.
+
+Every knob is declared once in [src/mgba.options.ts](src/mgba.options.ts); `MGBA_SPEC`, the
+defaults and the rows are all derived from that catalog.
 
 ### Sizing the canvas
 
-The presentation ratio is not a constant a host can hardcode: 3:2 on GBA,
-10:9 on Game Boy, 8:7 once a Super Game Boy border appears, and 4:3 when the
-player picks `aspect: '4:3'`. So `load()` publishes it on the canvas two ways —
-`aspect-ratio`, which shapes the element, and `--mgba-aspect`, the same number
-in a form arithmetic can use:
+Mounted on an element, the SDK sizes its canvas to fit it at the picture's ratio — 3:2 on GBA,
+10:9 on Game Boy, 8:7 once a Super Game Boy border appears, 4:3 with `aspect: '4:3'` — and
+refits when the geometry or the option changes. Mounted on a canvas of yours, the core still
+publishes the ratio on it as `aspect-ratio` and `--mgba-aspect`:
 
 ```css
-.runtime canvas {
-  width: min(100%, calc(100% * var(--mgba-aspect)));
-  height: auto;
-}
+canvas { width: min(100%, calc(100% * var(--mgba-aspect))); height: auto; }
 ```
-
-Both are updated whenever the geometry or the option changes, so a game
-switching resolution re-fits without the host doing anything.
-
-### Capabilities
-
-- **Save states**: `saveState()` / `loadState()` via mGBA's in-memory snapshot
-  API — 388 KiB on GBA, 70 KiB on Game Boy.
-- **SRAM persistence**: battery-backed savedata is persisted to OPFS
-  (`mgba/<storageNamespace>/sram.bin`) on pause/destroy and every 15 s;
-  `purgeStorage()` removes the active namespace, along with the menu settings
-  saved for it.
-- **Screenshots**: `screenshot()` returns a PNG blob.
-- **`coreSelectable`**: one package, two cores. `options.system` is where a
-  host's core choice lands.
 
 ### Default controls
 
-| Control | Key |
-|---------|-----|
-| D-pad | Arrow keys |
-| A / B | X / Z |
-| L / R | A / S |
-| Start | Enter |
-| Select | Right Shift |
+| Control | Key | Standard gamepad |
+|---------|-----|------------------|
+| D-pad | Arrow keys | 12–15 / left stick |
+| A / B | X / Z | 0 / 1 |
+| L / R | A / S | 4 / 5 |
+| Start | Enter | 9 |
+| Select | Right Shift | 8 |
 
-Gamepads (standard mapping) are polled automatically. Rebind via
-`engine.setInput({ 'a': 'KeyJ', ... })` (KeyboardEvent codes); a `p1.` prefix is
-accepted but not required, since the handheld has one controller.
+Every connected gamepad plays (`options.gamepads`), so a physical pad and the engine-specs
+touch pad — which exposes itself as a standard gamepad — work together. Keys and buttons are
+released whenever the game pauses.
 
 ## Build
 
 ```sh
 make build        # Full build: WASM (Docker/Emscripten) + TypeScript SDK
-make build-sdk    # TypeScript only (SDK + manifest + demo shell)
+make build-sdk    # SDK + contract runtime + engine app + demo page (no WASM)
+make test         # Type-check, then the tests against the built package
 make build-wasm   # mGBA WASM only (via Docker)
 make preview      # Serve dist/ at :8030 with COOP/COEP headers
 make smoke        # Headless boot test (needs a ROM in roms/)
