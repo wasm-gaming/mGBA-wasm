@@ -10,7 +10,7 @@ echo "Building mGBA WASM via Docker..."
 docker run --rm \
     -v "$PROJECT_DIR:/workspace" \
     -w /workspace \
-    emscripten/emsdk:latest \
+    emscripten/emsdk:7.0.0 \
     bash -c "
       set -euo pipefail
       apt-get update -qq && apt-get install -y cmake git -qq
