@@ -1,4 +1,4 @@
-import type { JSONSchema } from '@wasm-gaming/engine-specs';
+import type { EnginePayloads, EngineSpec, PropertySpec } from '@wasm-gaming/engine-specs';
 
 /**
  * Which core boots the ROM. `auto` lets `mCoreFindVF()` sniff the image, which
@@ -64,8 +64,6 @@ export interface MgbaOptions {
   gamepads?: boolean;
   /** Core messages printed to the console. */
   logLevel?: MgbaLogLevel;
-  /** Show the demo shell's in-game settings menu on Escape. Defaults to `true`. */
-  escMenu?: boolean;
 }
 
 export const DEFAULT_MGBA_OPTIONS: Required<MgbaOptions> = {
@@ -80,7 +78,6 @@ export const DEFAULT_MGBA_OPTIONS: Required<MgbaOptions> = {
   volume: 1.0,
   gamepads: true,
   logLevel: 'error',
-  escMenu: true,
 };
 
 /** Platform ids consumed by `mgbawasm_setup()` (mPLATFORM_* in core/core.h). */
@@ -121,7 +118,7 @@ export const MGBA_LOG_LEVEL_IDS: Record<MgbaLogLevel, number> = {
  * ESC menu are all derived from this catalog, so adding a row here is enough to
  * expose a new setting.
  */
-export type MgbaOptionKey = Exclude<keyof MgbaOptions, 'escMenu'>;
+export type MgbaOptionKey = keyof MgbaOptions;
 
 export type MgbaOptionValue = boolean | string | number;
 
@@ -416,41 +413,107 @@ export function toEscMenuGroups(
   }));
 }
 
-// -------------------------------------------------------------- schema
+// ------------------------------------------------------------ contract
 
-function schemaForOption(option: MgbaOptionSpec): JSONSchema {
-  if (option.type === 'boolean') {
-    return { type: 'boolean', default: option.default, description: option.description };
-  }
-  if (option.type === 'enum') {
-    return {
-      type: 'string',
-      enum: option.values.map((choice) => choice.value),
-      default: option.default,
-      description: option.description,
-    };
-  }
+/** Bytes, or a thunk that produces them only when the engine actually needs them. */
+export type MgbaAsset =
+  | Uint8Array
+  | ArrayBuffer
+  | null
+  | (() => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>);
+
+/** The engine: fixed for the life of the wasm instance. */
+export interface MgbaEngineConfig {
+  /** Emscripten glue URL. Defaults to `./mgba.js` next to the SDK. */
+  jsUrl?: string;
+  /** WASM URL. Defaults to `./mgba.wasm` next to the glue. */
+  wasmUrl?: string;
+}
+
+export interface MgbaAssets {
+  /** The cartridge: `.gba`, `.gb`, `.gbc` or `.sgb`, or a `.zip` holding one. Required to start. */
+  rom?: MgbaAsset;
+  /** A real 16 KiB GBA BIOS. Optional: without it mGBA runs its high-level replacement. */
+  bios?: MgbaAsset;
+}
+
+/** Where this engine's files live, and whether they outlive the page. */
+export interface MgbaStorage {
+  /**
+   * Per-game folder for battery RAM and save states, inside the engine's own folder:
+   * OPFS `mgba/<namespace>/`. Cleaned like every engine's (see `storagePath()`).
+   *
+   * @defaultValue `"default"`
+   */
+  namespace?: string;
+  /** `null` keeps nothing; otherwise the folder is mirrored to OPFS. */
+  persist?: 'opfs' | null;
+}
+
+/** Engine events beyond the contract's core set. */
+export interface MgbaEvents {
+  /** Files were just written to (or removed from) `mgba/<namespace>/`. */
+  saves: { files: string[] };
+}
+
+export interface MgbaPayloads extends EnginePayloads {
+  config: MgbaEngineConfig;
+  options: MgbaOptions;
+  assets: MgbaAssets;
+  storage: MgbaStorage;
+  events: MgbaEvents;
+}
+
+/** The GBA picture: 240 × 160 (Game Boy: 160 × 144; 256 × 224 with a Super Game Boy border). */
+export const MGBA_VIDEO = { width: 240, height: 160, aspect: '3:2' } as const;
+
+/** One option of the catalog as the contract describes it: live unless it needs a reset. */
+function specForOption(option: MgbaOptionSpec): PropertySpec<MgbaOptionValue> {
   return {
-    type: option.integer ? 'integer' : 'number',
     default: option.default,
-    ...(option.range
-      ? { minimum: option.range.minimum, maximum: option.range.maximum }
-      : { enum: option.values.map((choice) => choice.value) }),
     description: option.description,
+    live: !option.requiresReset,
+    ...(option.type === 'boolean'
+      ? { enum: [true, false] }
+      : option.type === 'enum'
+        ? { enum: option.values.map((choice) => choice.value) }
+        : option.range
+          ? {}
+          : { enum: option.values.map((choice) => choice.value) }),
   };
 }
 
-export const MGBA_OPTIONS_SCHEMA: JSONSchema = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    ...Object.fromEntries(
-      MGBA_ENGINE_OPTIONS.map((option) => [option.key, schemaForOption(option)]),
-    ),
-    escMenu: {
-      type: 'boolean',
-      default: true,
-      description: "Show the demo shell's in-game settings menu when the player presses Escape.",
+export const MGBA_SPEC: EngineSpec<MgbaPayloads> = {
+  config: {
+    jsUrl: { live: false, description: 'Emscripten glue URL. Defaults to ./mgba.js.' },
+    wasmUrl: { live: false, description: 'WASM URL. Defaults to ./mgba.wasm.' },
+  },
+  options: Object.fromEntries(MGBA_ENGINE_OPTIONS.map((option) => [option.key, specForOption(option)])) as Record<
+    MgbaOptionKey,
+    PropertySpec<never>
+  >,
+  assets: {
+    rom: {
+      allowedTypes: ['.gba', '.gb', '.gbc', '.sgb', '.zip'],
+      live: false,
+      description: 'The Game Boy Advance / Game Boy / Game Boy Color cartridge, or a zip holding one. Required to start.',
+    },
+    bios: {
+      allowedTypes: ['.bin', '.gba', '.rom'],
+      live: false,
+      description: 'A real GBA BIOS (16 KiB). Optional: mGBA replaces it with its own high-level BIOS.',
+    },
+  },
+  storage: {
+    namespace: {
+      default: 'default',
+      live: false,
+      description: "Folder for this game's battery RAM and save states (OPFS mgba/<namespace>/).",
+    },
+    persist: {
+      enum: ['opfs', null],
+      live: false,
+      description: 'null keeps nothing; otherwise the folder is mirrored to OPFS.',
     },
   },
 };

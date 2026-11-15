@@ -2,8 +2,10 @@ BIN := node_modules/.bin
 
 PORT ?= 8030
 
-.PHONY: build build-sdk build-lib build-manifest build-demo build-wasm build-wasm-ci build-wasm-docker \
+.PHONY: build build-sdk build-lib build-specs build-app build-demo build-wasm build-wasm-ci build-wasm-docker \
 	preview typecheck test smoke release-check i install clean help
+
+SPECS := node_modules/@wasm-gaming/engine-specs
 
 i: install
 install: ## Install dev dependencies
@@ -15,32 +17,27 @@ node_modules: package.json
 
 build: build-wasm build-sdk ## Full build → dist/ (WASM first, then SDK/demo)
 
-build-sdk: build-lib build-manifest build-demo ## TypeScript + manifest + demo shell
+build-sdk: build-lib build-specs build-app build-demo ## The published SDK: TypeScript + the contract runtime + the app, and the demo page
 
 build-lib: node_modules ## Compile SDK/options/manifest → dist/mgba/
 	$(BIN)/tsc -p tsconfig.json
 
-build-manifest: build-lib ## Serialize typed manifest → dist/manifest.json
-	node scripts/emit-manifest.mjs
+build-specs: build-lib ## Ship the contract runtime beside the SDK and import it relatively
+	# The SDK extends the contract's base classes, so engine-specs is a runtime import.
+	# Copied into dist/mgba/ (inside `files`) and the emitted imports rewritten to it:
+	# the package loads from any static server, no import map.
+	cp $(SPECS)/dist/engine-specs.js dist/mgba/engine-specs.js
+	node scripts/localize-specs.mjs dist/mgba
 
-DEMO_SRC := node_modules/@wasm-gaming/engine-specs/demo
+build-app: ## The engine's own app (suspend points + pause menu) → dist/mgba/app/
+	# Plain JS + CSS, mounted by hosts as <engine>/app/app.js (EngineApp); it imports
+	# the SDK next to it relatively.
+	rm -rf dist/mgba/app
+	mkdir -p dist/mgba/app
+	cp src/app/app.js src/app/app.css dist/mgba/app/
 
-build-demo: build-lib ## Assemble the themable engine-specs demo shell + GBA skin
-	@rm -f dist/index.html dist/main.js
-	cp -R $(DEMO_SRC)/. dist/
-	rm -f dist/README.md
+build-demo: build-lib ## The no-build demo page → dist/index.html
 	cp src/demo/index.html dist/index.html
-	cp src/demo/mgba.css dist/mgba.css
-
-SPECS_SRC ?= ../engine-specs
-
-link-specs: build-sdk ## Overlay a local engine-specs checkout's demo shell onto dist/
-	@test -d $(SPECS_SRC)/demo || { echo "no demo/ in $(SPECS_SRC) — set SPECS_SRC"; exit 1; }
-	cp -R $(SPECS_SRC)/demo/. dist/
-	@rm -f dist/README.md
-	cp src/demo/index.html dist/index.html
-	cp src/demo/mgba.css dist/mgba.css
-	@echo "dist/ now carries the shell from $(SPECS_SRC) (build-sdk reverts it to the npm one)"
 
 build-wasm: ## Build mGBA WASM artifacts via local Docker wrapper
 	bash scripts/build-mgba-docker.sh
@@ -56,7 +53,8 @@ typecheck: build-lib
 smoke: ## Headless boot test (needs dist/mgba + roms/*.gba)
 	node scripts/smoke-test.cjs
 
-test: typecheck
+test: typecheck build-sdk ## Type-check, then run tests/ against the built package
+	node --test tests/*.test.mjs
 
 release-check: test
 	npm config get registry

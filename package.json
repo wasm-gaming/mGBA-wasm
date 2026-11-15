@@ -22,13 +22,15 @@
       "types": "./dist/mgba/mgba.options.d.ts",
       "import": "./dist/mgba/mgba.options.js"
     },
-    "./manifest": "./dist/manifest.json"
+    "./app": {
+      "import": "./dist/mgba/app/app.js"
+    }
   },
   "files": [
     "dist/mgba/",
-    "dist/manifest.json",
+    "src/app/",
     "src/mgba.config.ts",
-    "src/mgba.manifest.ts",
+    "src/mgba.core.ts",
     "src/mgba.options.ts",
     "src/mgba.sdk.ts",
     "src/mgba.zip.ts",
@@ -36,16 +38,11 @@
   ],
   "comment:scripts": "Build logic lives in the Makefile, not here (make build / build-sdk / build-wasm / preview).",
   "scripts": {},
-  "peerDependencies": {
-    "@wasm-gaming/engine-specs": ">=0.2.6"
-  },
-  "peerDependenciesMeta": {
-    "@wasm-gaming/engine-specs": {
-      "optional": true
-    }
+  "comment:dependencies": "engine-specs is the one wasm-gaming package an engine depends on. Its runtime is also copied into dist/mgba/ and imported relatively, so the built SDK loads without a bundler or an import map; the dependency carries the types.",
+  "dependencies": {
+    "@wasm-gaming/engine-specs": "^0.5.0"
   },
   "devDependencies": {
-    "@wasm-gaming/engine-specs": "^0.2.6",
     "typescript": "^5.5.0"
   },
   "engineContract": "https://github.com/wasm-gaming/engine-specs",

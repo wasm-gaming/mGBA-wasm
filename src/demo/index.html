@@ -1,119 +1,72 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>mGBA WASM — Game Boy Advance Demo</title>
-    <link rel="icon" href="data:," />
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mGBA WASM</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    html, body { margin: 0; height: 100%; background: #000; color: #e2e8f0; }
+    body { display: grid; grid-template-rows: 1fr auto; }
+    #stage { display: grid; place-items: center; min-height: 0; }
+    #bar { display: flex; gap: .75rem; align-items: center; justify-content: center; padding: .75rem; background: #111; flex-wrap: wrap; }
+    button { font: inherit; padding: .4rem 1rem; background: #222; color: inherit; border: 1px solid #444; border-radius: 6px; cursor: pointer; }
+    #status { color: #94a3b8; font-size: .85rem; }
+    #drop { position: fixed; inset: 0; display: none; place-items: center; background: #000c; font-size: 1.4rem; }
+    body.dragging #drop { display: grid; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="bar">
+    <input type="file" id="rom" accept=".gba,.gb,.gbc,.sgb,.zip" />
+    <button id="pause" disabled>Pause</button>
+    <button id="reset" disabled>Reset</button>
+    <span id="status">Pick or drop a GBA, Game Boy or Game Boy Color ROM (or a zip). Arrows, Z X (B A), A S (L R), Enter, Right Shift.</span>
+  </div>
+  <div id="drop">Drop the ROM</div>
 
-    <!-- Base theme from the engine-specs demo template, then our GBA skin.
-         mgba.css is loaded last so its :root token overrides win. -->
-    <link rel="stylesheet" href="./demo.css" />
-    <link rel="stylesheet" href="./mgba.css" />
-  </head>
-  <body>
-    <main></main>
+  <script type="module">
+    // No build and no import map: the SDK is self-contained (it carries the
+    // contract's runtime beside it). One game per page — reload for another.
+    import MgbaSDK from './mgba/mgba.sdk.js';
 
-    <script type="module">
-      import demo from './demo.js'
-      import sdk, { manifest } from './mgba/mgba.sdk.js'
-      import { toEscMenuGroups } from './mgba/mgba.options.js'
+    const status = document.querySelector('#status');
+    let play = null;
 
-      // Engine options worth trying without editing code, as page query params:
-      // ?system=gb, ?aspect=4:3, ?interframeBlending=true, ?idleOptimization=ignore, ...
-      const params = new URLSearchParams(location.search)
-      const BOOLEAN_KEYS = [
-        'interframeBlending',
-        'skipBios',
-        'allowOpposingDirections',
-        'gamepads',
-        'escMenu',
-      ]
-      const NUMBER_KEYS = ['volume']
-      const overrides = {}
-      for (const key of [
-        'system',
-        'gbModel',
-        'idleOptimization',
-        'renderFilter',
-        'aspect',
-        'logLevel',
-        ...BOOLEAN_KEYS,
-        ...NUMBER_KEYS,
-      ]) {
-        const value = params.get(key)
-        if (value === null) continue
-        if (BOOLEAN_KEYS.includes(key)) overrides[key] = value !== 'false'
-        else if (NUMBER_KEYS.includes(key)) overrides[key] = Number(value)
-        else overrides[key] = value
+    async function boot(file) {
+      if (play) { location.reload(); return; }
+      status.textContent = `Loading ${file.name}…`;
+      try {
+        play = await new MgbaSDK()
+          .assets({ rom: () => file.arrayBuffer() })
+          .storage({ namespace: file.name.replace(/\.[^.]+$/, '') })
+          .on('saves', ({ detail }) => (status.textContent = `Saved ${detail.files.join(', ')} → ${play.storagePath}/`))
+          .on('error', ({ detail }) => (status.textContent = `Error: ${detail.message}`))
+          .mount(document.querySelector('#stage'))
+          .start();
+        status.textContent = `${file.name} — saves in OPFS ${play.storagePath}/`;
+        for (const b of document.querySelectorAll('button')) b.disabled = false;
+        document.querySelector('#stage canvas').focus();
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
       }
+    }
 
-      // The shell captures this array once and mutates each row's `value` as
-      // the player changes it, so the same reference is reused below to seed it
-      // with what the engine actually booted with.
-      const optionGroups = toEscMenuGroups()
-
-      let engine = null
-
-      demo
-        .init({
-          manifest,
-          messages: {
-            title: 'mGBA WASM — Game Boy Advance Demo',
-            dropRomPrompt: 'Drop a .gba / .gb / .gbc ROM',
-            launchButton: 'Launch',
-            escMenuTitle: 'mGBA Settings',
-          },
-          // mGBA's high-level BIOS runs virtually everything, so a BIOS image
-          // is offered rather than demanded.
-          bios: 'optional',
-          escMenu: {
-            enabled: true,
-            optionGroups,
-            onOptionChange(key, value) {
-              engine?.config.write(key, value)
-            },
-            onRestoreDefaults() {
-              engine?.config.restoreDefaults()
-              syncMenu()
-            },
-          },
-        })
-        .on('launch', async (e) => {
-          const assets = {}
-          if (demo.hasFile('rom')) assets.rom = await demo.loadToMEMFS('rom')
-          if (demo.hasFile('bios')) assets.bios = await demo.loadToMEMFS('bios')
-
-          engine = await sdk.load({
-            attachTo: e.attachTo,
-            assets,
-            options: overrides,
-            persist: 'opfs',
-            // Per-game SRAM and per-game menu tweaks, keyed by the file the
-            // player dropped.
-            storageNamespace: (e.fileName || 'default').replace(/\.[^.]+$/, ''),
-            onEvent(event) {
-              if (event.type === 'error') console.error(event.error)
-            },
-          })
-
-          syncMenu()
-          engine.start()
-          return engine
-        })
-
-      /** Copies the engine's live values into the rows the shell is holding. */
-      function syncMenu() {
-        if (!engine) return
-        const current = engine.escMenuGroups()
-        for (const group of optionGroups) {
-          const fresh = current.find((g) => g.id === group.id)
-          for (const option of group.options) {
-            const match = fresh?.options.find((o) => o.key === option.key)
-            if (match) option.value = match.value
-          }
-        }
-      }
-    </script>
-  </body>
+    document.querySelector('#rom').addEventListener('change', (e) => e.target.files[0] && boot(e.target.files[0]));
+    document.querySelector('#pause').addEventListener('click', (e) => {
+      if (play.pausedBy) { play.resume('demo'); e.target.textContent = 'Pause'; }
+      else { play.pause('demo'); e.target.textContent = 'Resume'; }
+    });
+    document.querySelector('#reset').addEventListener('click', () => play.restart());
+    addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dragging'); });
+    addEventListener('dragleave', () => document.body.classList.remove('dragging'));
+    addEventListener('drop', (e) => {
+      e.preventDefault();
+      document.body.classList.remove('dragging');
+      const file = e.dataTransfer.files[0];
+      if (file) boot(file);
+    });
+  </script>
+</body>
 </html>
