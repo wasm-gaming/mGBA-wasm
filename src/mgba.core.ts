@@ -111,7 +111,7 @@ const KEY_BITS: Record<string, number> = {
  * Default keyboard bindings (KeyboardEvent.code → control). X/Z sit where A/B
  * do on the handheld: A is the right-hand button, B the left one.
  */
-const DEFAULT_KEYMAP: Record<string, string> = {
+export const DEFAULT_KEYMAP: Readonly<Record<string, string>> = {
   'p1.up': 'ArrowUp',
   'p1.down': 'ArrowDown',
   'p1.left': 'ArrowLeft',
@@ -251,7 +251,32 @@ export interface MgbaCoreInit {
   wasmUrl?: string | undefined;
   /** A new picture size or aspect, so the host can refit the canvas. */
   onResize?: () => void;
+  /** Called after each batch of emulated frames, with how many ran (a performance counter). */
+  onFrames?: (count: number) => void;
 }
+
+/** The handheld's controls, as `setControls()` names them. */
+export type MgbaControl = 'a' | 'b' | 'l' | 'r' | 'start' | 'select' | 'up' | 'down' | 'left' | 'right';
+
+/** The player's bindings: physical keys (`KeyboardEvent.code`) and gamepad buttons (standard mapping). */
+export interface MgbaControls {
+  keys?: Partial<Record<MgbaControl, string>>;
+  buttons?: Partial<Record<MgbaControl, number>>;
+}
+
+/** Default gamepad buttons (standard mapping) per control. */
+export const DEFAULT_PADMAP: Readonly<Record<MgbaControl, number>> = Object.freeze({
+  a: 0,
+  b: 1,
+  l: 4,
+  r: 5,
+  select: 8,
+  start: 9,
+  up: 12,
+  down: 13,
+  left: 14,
+  right: 15,
+});
 
 /** The running emulator, as `mgba.sdk.ts` drives it. */
 export interface MgbaCore {
@@ -273,6 +298,8 @@ export interface MgbaCore {
   snapshot(): Promise<Blob | null>;
   /** Battery RAM to OPFS; true when it changed and was written. */
   persistSram(): Promise<boolean>;
+  /** Rebind keys and gamepad buttons; what is not given keeps its default. Live. */
+  setControls(controls: MgbaControls): void;
   destroy(): Promise<void>;
 }
 
@@ -530,6 +557,22 @@ export async function createMgbaCore(init: MgbaCoreInit): Promise<MgbaCore> {
   };
   buildKeymap(DEFAULT_KEYMAP);
 
+  // Gamepad button per control (standard mapping); the left stick always moves too.
+  let padTable: Record<MgbaControl, number> = { ...DEFAULT_PADMAP };
+  const setControls = (controls: MgbaControls): void => {
+    const keys: Record<string, string> = { ...DEFAULT_KEYMAP };
+    for (const [control, code] of Object.entries(controls.keys ?? {})) {
+      if (typeof code === 'string' && code) keys[`p1.${control}`] = code;
+    }
+    buildKeymap(keys);
+    padTable = { ...DEFAULT_PADMAP };
+    for (const [control, button] of Object.entries(controls.buttons ?? {})) {
+      if (Number.isInteger(button) && control in padTable) padTable[control as MgbaControl] = button as number;
+    }
+    keyMask = 0;
+    pushInput();
+  };
+
   const applyKey = (code: string, down: boolean): boolean => {
     const bit = codeToBit.get(code);
     if (bit === undefined) return false;
@@ -556,18 +599,18 @@ export async function createMgbaCore(init: MgbaCoreInit): Promise<MgbaCore> {
     // Every connected pad plays: a physical one and the on-screen touch pad alike.
     for (const pad of navigator.getGamepads()) {
       if (!pad || !pad.connected) continue;
-      const btn = (i: number): boolean => !!pad.buttons[i]?.pressed;
+      const btn = (control: MgbaControl): boolean => !!pad.buttons[padTable[control]]?.pressed;
       const ax = (i: number): number => pad.axes[i] ?? 0;
-      if (btn(0)) mask |= 1 << KEY_BITS.a;
-      if (btn(1)) mask |= 1 << KEY_BITS.b;
-      if (btn(4)) mask |= 1 << KEY_BITS.l;
-      if (btn(5)) mask |= 1 << KEY_BITS.r;
-      if (btn(8)) mask |= 1 << KEY_BITS.select;
-      if (btn(9)) mask |= 1 << KEY_BITS.start;
-      if (btn(12) || ax(1) < -0.4) mask |= 1 << KEY_BITS.up;
-      if (btn(13) || ax(1) > 0.4) mask |= 1 << KEY_BITS.down;
-      if (btn(14) || ax(0) < -0.4) mask |= 1 << KEY_BITS.left;
-      if (btn(15) || ax(0) > 0.4) mask |= 1 << KEY_BITS.right;
+      if (btn('a')) mask |= 1 << KEY_BITS.a;
+      if (btn('b')) mask |= 1 << KEY_BITS.b;
+      if (btn('l')) mask |= 1 << KEY_BITS.l;
+      if (btn('r')) mask |= 1 << KEY_BITS.r;
+      if (btn('select')) mask |= 1 << KEY_BITS.select;
+      if (btn('start')) mask |= 1 << KEY_BITS.start;
+      if (btn('up') || ax(1) < -0.4) mask |= 1 << KEY_BITS.up;
+      if (btn('down') || ax(1) > 0.4) mask |= 1 << KEY_BITS.down;
+      if (btn('left') || ax(0) < -0.4) mask |= 1 << KEY_BITS.left;
+      if (btn('right') || ax(0) > 0.4) mask |= 1 << KEY_BITS.right;
     }
     if (mask !== padMask) {
       padMask = mask;
@@ -745,6 +788,7 @@ export async function createMgbaCore(init: MgbaCoreInit): Promise<MgbaCore> {
     if (frames > 0) {
       runFrames(frames);
       renderFrame();
+      init.onFrames?.(frames);
     }
 
   };
@@ -908,6 +952,7 @@ export async function createMgbaCore(init: MgbaCoreInit): Promise<MgbaCore> {
       return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
     },
     persistSram,
+    setControls,
     async destroy(): Promise<void> {
       running = false;
       paused = false;
