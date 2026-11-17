@@ -1,4 +1,4 @@
-import type { EnginePayloads, EngineSpec, PropertySpec } from '@wasm-gaming/engine-specs';
+import type { EnginePayloads, EngineSpec, Localized, PropertySpec, SettingGroup } from '@wasm-gaming/engine-specs';
 
 /**
  * Which core boots the ROM. `auto` lets `mCoreFindVF()` sniff the image, which
@@ -468,6 +468,47 @@ export interface MgbaPayloads extends EnginePayloads {
 export const MGBA_VIDEO = { width: 240, height: 160, aspect: '3:2' } as const;
 
 /** One option of the catalog as the contract describes it: live unless it needs a reset. */
+/**
+ * The settings screen's words (engine-specs `settingsModel()`): the Spanish of each label and
+ * value label, and the screen section of each catalog group. A group without a section
+ * (`debug`) is not shown to players.
+ */
+const SETTING_GROUP: Readonly<Record<string, SettingGroup>> = {
+  video: 'video',
+  audio: 'audio',
+  emulation: 'emulation',
+  controllers: 'emulation',
+};
+const SPANISH: Readonly<Partial<Record<MgbaOptionKey, { label: string; values?: Record<string, string> }>>> = {
+  renderFilter: { label: 'Suavizado', values: { pixelated: 'Píxeles nítidos', smooth: 'Suavizado' } },
+  aspect: { label: 'Proporción', values: { native: 'Nativa' } },
+  interframeBlending: { label: 'Fusión de fotogramas' },
+  volume: { label: 'Volumen', values: { Mute: 'Silencio' } },
+  system: { label: 'Sistema', values: { auto: 'Automático' } },
+  gbModel: { label: 'Modelo de Game Boy', values: { auto: 'Automático' } },
+  idleOptimization: { label: 'Bucles de espera', values: { remove: 'Quitar', detect: 'Detectar', ignore: 'Emular' } },
+  skipBios: { label: 'Saltar la intro de la BIOS' },
+  allowOpposingDirections: { label: 'Direcciones opuestas' },
+  gamepads: { label: 'Mandos' },
+};
+const groupOf = (key: MgbaOptionKey): string | undefined =>
+  MGBA_OPTION_GROUPS.find((group) => group.options.some((option) => option.key === key))?.id;
+
+function settingFields(option: MgbaOptionSpec): Pick<PropertySpec<MgbaOptionValue>, 'label' | 'group' | 'valueLabels'> {
+  const group = SETTING_GROUP[groupOf(option.key) ?? ''];
+  if (!group) return {};
+  const es = SPANISH[option.key];
+  const label: Localized = es ? { en: option.label, es: es.label } : option.label;
+  if (option.type === 'boolean') return { label, group };
+  const valueLabels = option.values.map(
+    (choice): Localized => {
+      const spanish = es?.values?.[String(choice.value)] ?? es?.values?.[choice.label];
+      return spanish ? { en: choice.label, es: spanish } : choice.label;
+    },
+  );
+  return { label, group, valueLabels };
+}
+
 function specForOption(option: MgbaOptionSpec): PropertySpec<MgbaOptionValue> {
   return {
     default: option.default,
@@ -475,11 +516,8 @@ function specForOption(option: MgbaOptionSpec): PropertySpec<MgbaOptionValue> {
     live: !option.requiresReset,
     ...(option.type === 'boolean'
       ? { enum: [true, false] }
-      : option.type === 'enum'
-        ? { enum: option.values.map((choice) => choice.value) }
-        : option.range
-          ? {}
-          : { enum: option.values.map((choice) => choice.value) }),
+      : { enum: option.values.map((choice) => choice.value) }),
+    ...settingFields(option),
   };
 }
 

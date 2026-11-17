@@ -37,7 +37,7 @@ import {
   type EngineSDKConstructor,
   type EventsOf,
 } from '@wasm-gaming/engine-specs';
-import { createMgbaCore, type MgbaCore } from './mgba.core.js';
+import { createMgbaCore, type MgbaControls, type MgbaCore } from './mgba.core.js';
 import {
   MGBA_SPEC,
   MGBA_VIDEO,
@@ -58,6 +58,8 @@ export type {
   MgbaStorage,
 } from './mgba.options.js';
 export type { MgbaConfig } from './mgba.config.js';
+export type { MgbaControl, MgbaControls } from './mgba.core.js';
+export { DEFAULT_KEYMAP, DEFAULT_PADMAP } from './mgba.core.js';
 export { toEscMenuGroups, type EscMenuGroup, type EscMenuOption } from './mgba.options.js';
 export { MGBA_SPEC, MGBA_VIDEO } from './mgba.options.js';
 
@@ -157,6 +159,8 @@ interface StoredFile {
 export class MgbaPlay extends EnginePlayBase<MgbaPayloads> {
   #core: MgbaCore | null = null;
   #destroyed = false;
+  #controls: MgbaControls | null = null;
+  #frameListeners = new Set<(count: number) => void>();
   #pauseOwner: string | null = null;
 
   #canvas: HTMLCanvasElement | null = null;
@@ -200,6 +204,21 @@ export class MgbaPlay extends EnginePlayBase<MgbaPayloads> {
   /** The live settings (the options catalog); writes apply to the running game. */
   get settings(): MgbaCore['config'] {
     return this.#requireCore().config;
+  }
+
+  /**
+   * Rebind the handheld's controls: physical keys (`KeyboardEvent.code`) and gamepad
+   * buttons (standard mapping) per control. What is left out keeps its default. Live.
+   */
+  setControls(controls: MgbaControls): void {
+    this.#controls = controls;
+    this.#core?.setControls(controls);
+  }
+
+  /** Hear every batch of emulated frames (for a performance counter); returns the unsubscribe. */
+  onFrames(listener: (count: number) => void): () => void {
+    this.#frameListeners.add(listener);
+    return () => this.#frameListeners.delete(listener);
   }
 
   /** The current frame as a PNG (the 2D canvas keeps the last one, paused or not). */
@@ -405,7 +424,11 @@ export class MgbaPlay extends EnginePlayBase<MgbaPayloads> {
       jsUrl: config.jsUrl,
       wasmUrl: config.wasmUrl,
       onResize: () => this.#fit(),
+      onFrames: (count) => {
+        for (const listener of this.#frameListeners) listener(count);
+      },
     });
+    if (this.#controls) this.#core.setControls(this.#controls);
     this.#core.start();
 
     if (this.#persist) {
